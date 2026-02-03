@@ -1,0 +1,10 @@
+## Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+## Local outputs from running the included scripts
+/stage_06_ranking/output_*.txt
+/stage_06_ranking/log_*.txt
+/stage_06_ranking/log_*/
+
