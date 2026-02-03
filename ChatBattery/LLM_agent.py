@@ -1,34 +1,160 @@
 import sys
+import os
+import re
 import openai
 import time
 
 
+OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
+
+
+def _configure_openai_client():
+    """
+    Configure OpenAI-compatible client settings.
+
+    - Default: OpenAI Chat Completions endpoint.
+    - Optional: OpenRouter (OpenAI-compatible) if you set either:
+        - OPENAI_API_BASE / OPENAI_BASE_URL to https://openrouter.ai/api/v1, or
+        - OPENROUTER_API_KEY (we will default api_base to OpenRouter).
+    """
+    api_base = (
+        os.getenv("OPENAI_API_BASE")
+        or os.getenv("OPENAI_BASE_URL")
+        or os.getenv("OPENROUTER_API_BASE")
+        or os.getenv("OPENROUTER_BASE_URL")
+    )
+
+    if api_base:
+        openai.api_base = api_base.rstrip("/")
+    elif os.getenv("OPENROUTER_API_KEY"):
+        # Convenience default: if user provides an OpenRouter key, use OpenRouter base.
+        openai.api_base = OPENROUTER_API_BASE
+
+    # Convenience: allow OPENROUTER_API_KEY without needing to also set OPENAI_API_KEY.
+    if os.getenv("OPENROUTER_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+        openai.api_key = os.getenv("OPENROUTER_API_KEY")
+
+
+def _is_openrouter_base(api_base: str) -> bool:
+    return "openrouter.ai" in (api_base or "")
+
+
+def _normalize_model_for_api(model: str) -> str:
+    """
+    OpenRouter requires fully-qualified model ids like `openai/gpt-4o-mini`.
+    For convenience, if the base url is OpenRouter and the model has no provider
+    prefix, we add one.
+    """
+    if _is_openrouter_base(getattr(openai, "api_base", "")) and "/" not in model:
+        prefix = os.getenv("CHATBATTERY_OPENROUTER_MODEL_PREFIX", "openai/").strip()
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        return f"{prefix}{model}"
+    return model
+
+
+def _clean_formula_candidate(text: str) -> str:
+    """
+    Convert common LLM formatting (markdown/LaTeX) into a plain-text formula.
+
+    Examples:
+      "$Li_{1.02}Fe_{0.70}Mn_{0.25}Mg_{0.05}PO_4$" -> "Li1.02Fe0.70Mn0.25Mg0.05PO4"
+      "**LiFePO_4**" -> "LiFePO4"
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    # Remove basic markdown emphasis/backticks.
+    text = text.replace("**", "").replace("__", "").strip("`").strip()
+
+    # If LaTeX math chunks exist, prefer the longest $...$ span.
+    if "$" in text:
+        chunks = re.findall(r"\$([^$]+)\$", text)
+        if chunks:
+            text = max(chunks, key=len)
+        else:
+            text = text.replace("$", "")
+
+    # Replace common LaTeX dot.
+    text = text.replace(r"\cdot", "·")
+
+    # Remove LaTeX commands (best-effort).
+    text = re.sub(r"\\[a-zA-Z]+", "", text)
+
+    # Convert LaTeX subscripts:
+    #   X_{1.02} -> X1.02
+    #   O_4 -> O4
+    text = re.sub(r"_\{([^}]+)\}", r"\1", text)
+    text = re.sub(r"_([0-9]+(?:\.[0-9]+)?)", r"\1", text)
+
+    # Drop braces left behind.
+    text = text.replace("{", "").replace("}", "")
+
+    # Remove whitespace.
+    text = re.sub(r"\s+", "", text)
+
+    # Keep only characters that can appear in formulas that this repo supports.
+    text = re.sub(r"[^A-Za-z0-9\.\(\)\[\]/·]", "", text)
+
+    return text
+
+
 def parse(raw_text, history_battery_list):
+    """
+    Extract candidate formulas from an LLM response.
+
+    The LLM may format formulas with markdown/LaTeX (e.g. subscripts). This
+    parser attempts to recover plain-text formulas and avoids extracting tokens
+    from "Reasoning" bullets.
+    """
     record = []
-    for line in raw_text.strip().split("\n"):
+
+    for line in (raw_text or "").strip().split("\n"):
         line = line.strip()
+        if not line:
+            continue
+
         if line.startswith("Assistant:"):
-            line = line.replace("Assistant:", "").strip()
+            line = line.replace("Assistant:", "", 1).strip()
+
+        # Only consider bullet lines (prompt asks for asterisks).
         if not line.startswith("*"):
             continue
-        line = line.split(" ")
-        
-        output_formula_list = []
-        for word in line:
-            upper_alpha_count, digit_count = 0, 0
-            for char in word:
-                if char.isupper():
-                    upper_alpha_count += 1
-                if char.isdigit():
-                    digit_count += 1
-            if upper_alpha_count > 1 and digit_count >= 1:
-                if not word[-1].isalnum() and word[-1] != ")" and word[-1] != "]":
-                    word = word[:-1]
-                output_formula_list.append(word)
 
-        output_formula_list = [x for x in output_formula_list if x not in history_battery_list]
-        if len(output_formula_list) > 0:
-            record.extend(output_formula_list)
+        # Skip reasoning bullets (these often contain fragments like PO_4, Li^+, etc.).
+        if re.search(r"\breasoning\b", line, flags=re.IGNORECASE):
+            continue
+
+        body = line.lstrip("*").strip()
+        if not body:
+            continue
+
+        # Prefer math chunks if present; otherwise parse the whole bullet.
+        segments = re.findall(r"\$([^$]+)\$", body)
+        if not segments:
+            segments = [body]
+
+        for seg in segments:
+            candidate = _clean_formula_candidate(seg)
+            if not candidate:
+                continue
+
+            # Avoid extracting pure anion fragments (e.g., PO4) by requiring Li/Na.
+            if ("Li" not in candidate) and ("Na" not in candidate):
+                continue
+
+            # Must contain at least 2 element tokens.
+            elements = re.findall(r"[A-Z][a-z]?", candidate)
+            if len(elements) < 2:
+                continue
+
+            if candidate in history_battery_list:
+                continue
+
+            if candidate not in record:
+                record.append(candidate)
+
     return record
 
 
@@ -56,10 +182,15 @@ class LLM_Agent:
         elif LLM_type == "qwen":
             return LLM_Agent.optimize_batteries_open_source(messages, loaded_model=loaded_model, loaded_tokenizer=loaded_tokenizer)
         else:
-            raise NotImplementedError
+            # Treat any other value as a direct OpenAI-compatible model id
+            # (e.g. "google/gemini-3-flash-preview" on OpenRouter).
+            return LLM_Agent.optimize_batteries_chatgpt(messages, model=LLM_type, temperature=temperature)
 
     @staticmethod
     def optimize_batteries_chatgpt(messages, model, temperature):
+        _configure_openai_client()
+        api_model = _normalize_model_for_api(model)
+
         received = False
 
         history_battery_list = []
@@ -68,14 +199,14 @@ class LLM_Agent:
             try:
                 if model == "chatgpt_3.5":
                     response = openai.ChatCompletion.create(
-                        model=model,
+                        model=api_model,
                         messages=messages,
                         temperature=temperature,
                         frequency_penalty=0.2,
                         n=None)
                 else:
                     response = openai.ChatCompletion.create(
-                        model=model,
+                        model=api_model,
                         messages=messages,
                         temperature=temperature,
                         n=None)
@@ -157,22 +288,27 @@ class LLM_Agent:
         elif LLM_type == 'chatgpt_4o':
             return LLM_Agent.rank_batteries_chatgpt(messages, model="gpt-4o-mini", temperature=temperature)
         else:
-            raise NotImplementedError
+            # Treat any other value as a direct OpenAI-compatible model id
+            # (e.g. "google/gemini-3-flash-preview" on OpenRouter).
+            return LLM_Agent.rank_batteries_chatgpt(messages, model=LLM_type, temperature=temperature)
 
     @staticmethod
     def rank_batteries_chatgpt(messages, model, temperature):
+        _configure_openai_client()
+        api_model = _normalize_model_for_api(model)
+
         received = False
 
         if model == "chatgpt_3.5":
             response = openai.ChatCompletion.create(
-                model=model,
+                model=api_model,
                 messages=messages,
                 temperature=temperature,
                 frequency_penalty=0.2,
                 n=None)
         else:
             response = openai.ChatCompletion.create(
-                model=model,
+                model=api_model,
                 messages=messages,
                 temperature=temperature,
                 n=None)

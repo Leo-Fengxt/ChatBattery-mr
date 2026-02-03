@@ -33,6 +33,11 @@ class Rank_Agent:
         for idx, formula in enumerate(formula_list):
             total_formula_to_index[formula] = idx
 
+        cache_pairwise_llm = bool(getattr(args, "cache_pairwise_llm", False))
+        cache_folder = getattr(args, "log_folder", None)
+        if cache_pairwise_llm and not cache_folder:
+            raise ValueError("--log_folder must be set when --cache_pairwise_llm is enabled.")
+
         def compare_first_better_than_second(formula_01, formula_02):
             template = """
         Could you compare the two Li cathode materials, {} and {}, and identify which one has a higher voltage vs. Li+/Li (V)?
@@ -55,13 +60,15 @@ class Rank_Agent:
             found = None
             while found is None:
                 print("comparing [{}, {}] .....".format(i, j))
-                log_file = os.path.join(args.log_folder, "pair_{}_{}.log".format(i, j))
+                if cache_pairwise_llm:
+                    log_file = os.path.join(cache_folder, "pair_{}_{}.log".format(i, j))
 
-                if os.path.exists(log_file):
-                    answer = open(log_file, "r").readlines()
-                    answer = "\n".join(answer).strip()
-                    found = parse_LLM_voltage_ranking(answer, formula_01, formula_02)
-                else:
+                    if os.path.exists(log_file):
+                        answer = open(log_file, "r").readlines()
+                        answer = "\n".join(answer).strip()
+                        found = parse_LLM_voltage_ranking(answer, formula_01, formula_02)
+                        continue
+
                     answer = LLM_Agent.rank_batteries(global_LLM_messages, LLM_type=args.LLM_type, temperature=args.temperature)
                     found = parse_LLM_voltage_ranking(answer, formula_01, formula_02)
                     if found is not None:
@@ -71,7 +78,10 @@ class Rank_Agent:
                         print("\n\n\n\n\n", file=f_)
                         print("========== LLM ==========", file=f_)
                         print(answer, file=f_)
-                        break
+                else:
+                    # No caching: always query the LLM, retry until the last line parses correctly.
+                    answer = LLM_Agent.rank_batteries(global_LLM_messages, LLM_type=args.LLM_type, temperature=args.temperature)
+                    found = parse_LLM_voltage_ranking(answer, formula_01, formula_02)
             
             if found == formula_list[i]:
                 return True

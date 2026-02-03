@@ -8,7 +8,14 @@ class Decision_Agent:
             raise NotImplementedError(f"Unsupported task_id={task_id}. Expected 101 (Li) or 102 (Na).")
 
         input_value = Domain_Agent.calculate_theoretical_capacity(input_formula, task_id)
-        output_value = Domain_Agent.calculate_theoretical_capacity(output_formula, task_id)
+        try:
+            output_value = Domain_Agent.calculate_theoretical_capacity(output_formula, task_id)
+        except Exception:
+            # If the candidate formula is malformed (e.g., "$PO_4"), treat it as invalid
+            # and keep the UI/pipeline running.
+            output_value = float("nan")
+            return input_value, output_value, False
+
         return input_value, output_value, output_value > input_value * 1
 
     @staticmethod

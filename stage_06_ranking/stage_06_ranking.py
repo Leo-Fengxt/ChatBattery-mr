@@ -11,11 +11,14 @@ if __name__ == "__main__":
     parser.add_argument("--output_file", type=str, default="output_03.txt")
     parser.add_argument("--log_file", type=str, default=None)
     parser.add_argument("--log_folder", type=str, default=None)
-    parser.add_argument("--LLM_type", type=str, default="chatgpt_4o")
+    parser.add_argument("--cache_pairwise_llm", action="store_true", help="Cache and reuse per-pair LLM comparisons (voltage metric only).")
+    parser.add_argument("--LLM_type", type=str, default="google/gemini-3-flash-preview")
     parser.add_argument("--temperature", type=float, default=1)
     args = parser.parse_args()
 
-    if args.log_folder is not None:
+    if args.metric == "voltage" and args.cache_pairwise_llm:
+        if args.log_folder is None:
+            raise ValueError("--log_folder is required when --cache_pairwise_llm is set.")
         os.makedirs(args.log_folder, exist_ok=True)
 
     input_f_ = open(args.input_file, "r")

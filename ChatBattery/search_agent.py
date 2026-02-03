@@ -1,7 +1,9 @@
-import requests
+import os
 from .domain_agent import Domain_Agent
 
-MP_api_key = 'xxx'
+# Prefer env vars so users don't hardcode secrets in the repo.
+# mp-api itself commonly uses MP_API_KEY, and some users use MATERIALS_PROJECT_API_KEY.
+MP_api_key = os.getenv("MP_API_KEY") or os.getenv("MATERIALS_PROJECT_API_KEY") or "xxx"
 
 
 

@@ -16,5 +16,4 @@ python stage_06_ranking.py \
 python stage_06_ranking.py \
 --metric=voltage --top_k=3 \
 --input_file=output_02.txt --output_file=output_03.txt \
---log_folder=log_03 \
 --log_file=log_03.txt

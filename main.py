@@ -73,6 +73,12 @@ def problem_conceptualization(input_battery, condition, task_index):
     mode = condition[0]
 
     if mode == "initial":
+        # Validate early to avoid downstream crashes (e.g., empty formula leading to ZeroDivisionError).
+        try:
+            Domain_Agent.calculate_theoretical_capacity(input_battery, task_index)
+        except Exception as e:
+            raise ValueError(f"Invalid input battery formula '{input_battery}': {e}")
+
         if task_index == 101:
             task_index_prompt_template = "We have a Li cathode material FORMULA_PLACEHOLDER. Can you optimize it to develop new cathode materials with higher capacity and improved stability? You can introduce new elements from the following groups: carbon group, alkaline earth metals group, and transition elements, excluding radioactive elements; and incorporate new elements directly into the chemical formula, rather than listing them separately; and give the ratio of each element; and adjust the ratio of existing elements. My requirements are proposing five optimized battery formulations, listing them in bullet points (in asterisk *, not - or number or any other symbol), ensuring each formula is chemically valid and realistic for battery applications, and providing reasoning for each modification."
         elif task_index == 102:
@@ -181,6 +187,18 @@ def index():
             condition = global_condition_list[-1]
             if condition[0] == "initial":  # only add input_battery at the initial step
                 input_battery = request.form.get("content_input").strip()
+                try:
+                    Domain_Agent.calculate_theoretical_capacity(input_battery, task_index)
+                except Exception as e:
+                    show_content(f"[ChatBattery]\nInvalid input battery formula: {e}\n\n")
+                    render_in_textarea = True
+                    default_textarea = "Please enter a valid chemical formula and click Stage 1.1 again."
+                    return render_template(
+                        "index.html",
+                        content_list=global_conversation_list,
+                        render_in_textarea=render_in_textarea,
+                        default_textarea=default_textarea,
+                    )
                 global_input_battery_list.append(input_battery)
             else:
                 input_battery = global_input_battery_list[-1]
@@ -339,7 +357,10 @@ def index():
                 if answer:
                     content += " and valid, <span style=\"color:{}\">with capacity {:.3f}</span>\n".format(domain_agent_color, output_value)
                 else:
-                    content += " and invalid, <span style=\"color:{}\">with capacity {:.3f}</span>\n".format(domain_agent_color, output_value)
+                    if output_value != output_value:  # NaN check
+                        content += " and invalid (malformed formula), <span style=\"color:{}\">with capacity N/A</span>\n".format(domain_agent_color)
+                    else:
+                        content += " and invalid, <span style=\"color:{}\">with capacity {:.3f}</span>\n".format(domain_agent_color, output_value)
 
                 show_content(content, color=decision_agent_color)
 
@@ -393,7 +414,16 @@ def index():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--task_index', required=False, type=int, default=101)
-    parser.add_argument('--LLM_type', required=False, type=str, default='chatgpt_3.5', choices=["chatgpt_3.5", "chatgpt_o1", "chatgpt_o3"], help='only support chatgpt now')
+    parser.add_argument(
+        '--LLM_type',
+        required=False,
+        type=str,
+        default='google/gemini-3-flash-preview',
+        help=(
+            "Either a built-in alias (chatgpt_3.5, chatgpt_o1, chatgpt_o3, chatgpt_4o) "
+            "or a direct OpenAI-compatible model id (e.g. google/gemini-3-flash-preview)."
+        ),
+    )
     args = parser.parse_args()
     args = vars(args)
 
@@ -401,4 +431,4 @@ if __name__ == "__main__":
 
     retrieval_DB = load_retrieval_DB(task_index)
 
-    app.run(debug=True)
+    app.run(host="0.0.0.0", debug=True)

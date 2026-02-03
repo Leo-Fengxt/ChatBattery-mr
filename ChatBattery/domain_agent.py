@@ -178,6 +178,8 @@ class Domain_Agent:
     @staticmethod
     def normalize_composition(comp_dict):
         total = sum(comp_dict.values())
+        if total == 0:
+            raise ValueError("Cannot normalize composition with total element count = 0.")
         return {element: count / total for element, count in comp_dict.items()}
 
     @staticmethod
@@ -188,8 +190,11 @@ class Domain_Agent:
         if element_count_01.keys() != element_count_02.keys():
             return False
 
-        element_count_01 = Domain_Agent.normalize_composition(element_count_01)
-        element_count_02 = Domain_Agent.normalize_composition(element_count_02)
+        try:
+            element_count_01 = Domain_Agent.normalize_composition(element_count_01)
+            element_count_02 = Domain_Agent.normalize_composition(element_count_02)
+        except ValueError:
+            return False
 
         for element in element_count_01.keys():
             count_01 = element_count_01[element]
@@ -204,18 +209,45 @@ class Domain_Agent:
     @staticmethod
     def calculate_molecular_weight(elements_count):
         weight = 0
+        unknown_elements = []
         for element, count in elements_count.items():
+            if element not in atomic_weights:
+                unknown_elements.append(element)
+                continue
             weight += atomic_weights[element] * count
+        if unknown_elements:
+            raise ValueError(f"Unknown elements in formula: {sorted(set(unknown_elements))}")
         return weight
 
     @staticmethod
     def calculate_theoretical_capacity(formula, task_id):
+        if formula is None:
+            raise ValueError("Formula is None.")
+        if not isinstance(formula, str):
+            formula = str(formula)
+        formula = formula.strip()
+        if not formula:
+            raise ValueError("Formula is empty.")
+
         elements_count = parse_formula(formula)
+        if not elements_count:
+            raise ValueError(f"Invalid formula '{formula}': no elements parsed.")
+
         if task_id == 101:
-            target_element_count = elements_count['Li']
+            target_element = "Li"
         elif task_id == 102:
-            target_element_count = elements_count['Na']
+            target_element = "Na"
+        else:
+            raise NotImplementedError(f"Unsupported task_id={task_id}. Expected 101 (Li) or 102 (Na).")
+
+        if target_element not in elements_count or elements_count[target_element] == 0:
+            raise ValueError(f"Invalid formula '{formula}': missing required element '{target_element}'.")
+
         molecular_weight = Domain_Agent.calculate_molecular_weight(elements_count)
+        if molecular_weight <= 0:
+            raise ValueError(f"Invalid formula '{formula}': molecular weight must be > 0, got {molecular_weight}.")
+
+        target_element_count = elements_count[target_element]
         theoretical_capacity = 96500 * target_element_count * (1 / molecular_weight) * (1 / 3.6)
         return theoretical_capacity
 

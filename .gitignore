@@ -8,3 +8,7 @@ __pycache__/
 /stage_06_ranking/log_*.txt
 /stage_06_ranking/log_*/
 
+## Optional data-preprocess artifacts
+/data/*_battery/preprocess_errors.csv
+/data/*_battery/preprocess_errors*.csv
+
