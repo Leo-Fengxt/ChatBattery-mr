@@ -1,3 +1,8 @@
+### Notes on modifications
+- Added support for Openrouter backend, and set default to newer models
+- Checks for validity of input
+- Improved formula extraction
+
 ## [ChatBattery] Expert-Guided LLM Reasoning for Battery Discovery: From AI-Driven Hypothesis to Synthesis and Characterization
 
 Authors: Shengchao Liu<sup>\*</sup>, Hannan Xu<sup>\*</sup>, Yan Ai<sup>\*</sup>, Huanxin Li<sup>+</sup>, Yoshua Bengio<sup>+</sup>, Harry Guo<sup>+</sup>
